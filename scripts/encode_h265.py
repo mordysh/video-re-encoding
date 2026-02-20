@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import subprocess
@@ -120,6 +121,8 @@ def main():
     files = [f for f in sorted(os.listdir(".")) if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f]
     
     files_to_convert = []
+    script_start_time = time.time()
+    file_timings = {}
     
     if resume_data and resume_data["file"] in files:
         print(f"\nFound partial work for: {resume_data['file']}")
@@ -165,6 +168,8 @@ def main():
             log(f"\nResuming: {file_path} at frame {start_frame}")
         else:
             log(f"\nProcessing: {file_path}")
+        
+        file_start_time = time.time()
 
         cmd = ["ffmpeg", "-nostdin"]
         if start_frame > 0:
@@ -248,7 +253,10 @@ def main():
             break
 
         if ffmpeg_process.returncode == 0:
-            log("✓ Success")
+            file_elapsed = time.time() - file_start_time
+            file_timings[file_path] = file_elapsed
+            encoding_speed = info["duration"] / file_elapsed if file_elapsed > 0 else 0
+            log(f"✓ Success | Time: {file_elapsed:.1f}s | Speed: {encoding_speed:.2f}x")
             os.remove(file_path)
             os.rename(output_path, file_path)
             clear_state()
@@ -272,6 +280,22 @@ def main():
             log(f"\nFile list saved to: {list_output}")
         except Exception as e:
             log(f"Error writing file list: {e}")
+
+    # Print timing summary
+    if file_timings:
+        total_time = time.time() - script_start_time
+        total_encode_time = sum(file_timings.values())
+        avg_time = total_encode_time / len(file_timings) if file_timings else 0
+        log("\n==========================================")
+        log("BENCHMARK SUMMARY")
+        log("==========================================")
+        for filename, elapsed in file_timings.items():
+            log(f"{filename}: {elapsed:.1f}s")
+        log(f"\nTotal Time: {total_time:.1f}s")
+        log(f"Total Encoding Time: {total_encode_time:.1f}s")
+        log(f"Files Processed: {len(file_timings)}")
+        log(f"Average Time per File: {avg_time:.1f}s")
+        log("==========================================")
 
     if caffeinate_process: caffeinate_process.terminate()
 
