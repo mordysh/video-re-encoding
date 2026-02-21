@@ -20,5 +20,5 @@ diskutil unmount force ~/local_dok
 ```bash
 df -h | grep local_dok
 ```
-
+Just a test change
 **Note:** Ensure 'Remote Login' is enabled in System Settings (General > Sharing > Remote Login) on the MacBook Air. Passwordless SSH is already set up for your MacBook Pro's `id_ed25519.pub` key.
