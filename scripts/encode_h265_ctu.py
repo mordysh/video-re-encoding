@@ -117,8 +117,17 @@ def main():
     log("==========================================")
 
     resume_data = load_state()
-    video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')
-    files = [f for f in sorted(os.listdir(".")) if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f]
+    
+    # Check for input file in command line arguments
+    files = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    if files:
+        if not os.path.isfile(files[0]):
+            log(f"Error: '{files[0]}' is not a valid file.")
+            sys.exit(1)
+        files = [files[0]]
+    else:
+        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')
+        files = [f for f in sorted(os.listdir(".")) if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f]
     
     files_to_convert = []
     
