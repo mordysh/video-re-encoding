@@ -14,6 +14,8 @@ import termios
 # Configuration
 STATE_FILE = ".encode_h265_resume.json"
 LOG_FILE = f"encode_h265_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+FFMPEG_BIN = "/mnt/raid/home/mordy/bin/ffmpeg" if os.path.exists("/mnt/raid/home/mordy/bin/ffmpeg") else "ffmpeg"
+FFPROBE_BIN = "/mnt/raid/home/mordy/bin/ffprobe" if os.path.exists("/mnt/raid/home/mordy/bin/ffprobe") else "ffprobe"
 
 # Global states
 ffmpeg_process = None
@@ -35,7 +37,7 @@ def log(message, mode="a"):
         pass
 
 def get_video_info(file_path):
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type,r_frame_rate:format=duration", "-of", "json", file_path]
+    cmd = [FFPROBE_BIN, "-v", "error", "-show_entries", "stream=codec_name,codec_type,r_frame_rate:format=duration", "-of", "json", file_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0: raise Exception("ffprobe failed")
     data = json.loads(result.stdout)
@@ -92,6 +94,20 @@ def cleanup(sig=None, frame=None):
         try: caffeinate_process.terminate()
         except: pass
 
+def find_video_files(paths):
+    video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')
+    found_files = []
+    for path in paths:
+        if os.path.isfile(path):
+            if path.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in path:
+                found_files.append(path)
+        elif os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f:
+                        found_files.append(os.path.join(root, f))
+    return sorted(found_files)
+
 def main():
     global ffmpeg_process, caffeinate_process, quit_requested, was_quit, dry_run, list_output
     
@@ -111,14 +127,19 @@ def main():
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
-    log("==========================================", mode="w")
+    log("==========================================")
     log("H.265 Encoding Script" + (" [DRY RUN]" if dry_run else "") + (" [LIST MODE]" if list_output else ""))
     log("Controls: P/Space=Pause & Resume, Q=Quit & Clean")
     log("==========================================")
 
     resume_data = load_state()
-    video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')
-    files = [f for f in sorted(os.listdir(".")) if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f]
+    
+    # Check for input files/dirs in command line arguments
+    args = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    if not args:
+        args = ["."]
+    
+    files = find_video_files(args)
     
     files_to_convert = []
     script_start_time = time.time()
@@ -171,7 +192,7 @@ def main():
         
         file_start_time = time.time()
 
-        cmd = ["ffmpeg", "-nostdin"]
+        cmd = [FFMPEG_BIN, "-nostdin"]
         if start_frame > 0:
             seek_time = start_frame / info["fps"]
             cmd.extend(["-ss", str(seek_time)])

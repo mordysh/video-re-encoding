@@ -14,6 +14,8 @@ import termios
 # Configuration
 STATE_FILE = ".encode_h265_resume.json"
 LOG_FILE = f"encode_h265_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+FFMPEG_BIN = "/mnt/raid/home/mordy/bin/ffmpeg" if os.path.exists("/mnt/raid/home/mordy/bin/ffmpeg") else "ffmpeg"
+FFPROBE_BIN = "/mnt/raid/home/mordy/bin/ffprobe" if os.path.exists("/mnt/raid/home/mordy/bin/ffprobe") else "ffprobe"
 
 # Global states
 ffmpeg_process = None
@@ -35,7 +37,7 @@ def log(message, mode="a"):
         pass
 
 def get_video_info(file_path):
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type,r_frame_rate:format=duration", "-of", "json", file_path]
+    cmd = [FFPROBE_BIN, "-v", "error", "-show_entries", "stream=codec_name,codec_type,r_frame_rate:format=duration", "-of", "json", file_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0: raise Exception("ffprobe failed")
     data = json.loads(result.stdout)
@@ -92,6 +94,20 @@ def cleanup(sig=None, frame=None):
         try: caffeinate_process.terminate()
         except: pass
 
+def find_video_files(paths):
+    video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')
+    found_files = []
+    for path in paths:
+        if os.path.isfile(path):
+            if path.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in path:
+                found_files.append(path)
+        elif os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f:
+                        found_files.append(os.path.join(root, f))
+    return sorted(found_files)
+
 def main():
     global ffmpeg_process, caffeinate_process, quit_requested, was_quit, dry_run, list_output
     
@@ -111,25 +127,23 @@ def main():
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
-    log("==========================================", mode="w")
+    log("==========================================")
     log("H.265 Encoding Script" + (" [DRY RUN]" if dry_run else "") + (" [LIST MODE]" if list_output else ""))
     log("Controls: P/Space=Pause & Resume, Q=Quit & Clean")
     log("==========================================")
 
     resume_data = load_state()
     
-    # Check for input file in command line arguments
-    files = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
-    if files:
-        if not os.path.isfile(files[0]):
-            log(f"Error: '{files[0]}' is not a valid file.")
-            sys.exit(1)
-        files = [files[0]]
-    else:
-        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')
-        files = [f for f in sorted(os.listdir(".")) if f.lower().endswith(video_extensions) and "_h265_mp3.mp4" not in f]
+    # Check for input files/dirs in command line arguments
+    args = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    if not args:
+        args = ["."]
+    
+    files = find_video_files(args)
     
     files_to_convert = []
+    script_start_time = time.time()
+    file_timings = {}
     
     if resume_data and resume_data["file"] in files:
         print(f"\nFound partial work for: {resume_data['file']}")
@@ -175,8 +189,10 @@ def main():
             log(f"\nResuming: {file_path} at frame {start_frame}")
         else:
             log(f"\nProcessing: {file_path}")
+        
+        file_start_time = time.time()
 
-        cmd = ["ffmpeg", "-nostdin"]
+        cmd = [FFMPEG_BIN, "-nostdin"]
         if start_frame > 0:
             seek_time = start_frame / info["fps"]
             cmd.extend(["-ss", str(seek_time)])
@@ -258,7 +274,10 @@ def main():
             break
 
         if ffmpeg_process.returncode == 0:
-            log("✓ Success")
+            file_elapsed = time.time() - file_start_time
+            file_timings[file_path] = file_elapsed
+            encoding_speed = info["duration"] / file_elapsed if file_elapsed > 0 else 0
+            log(f"✓ Success | Time: {file_elapsed:.1f}s | Speed: {encoding_speed:.2f}x")
             os.remove(file_path)
             os.rename(output_path, file_path)
             clear_state()
@@ -282,6 +301,22 @@ def main():
             log(f"\nFile list saved to: {list_output}")
         except Exception as e:
             log(f"Error writing file list: {e}")
+
+    # Print timing summary
+    if file_timings:
+        total_time = time.time() - script_start_time
+        total_encode_time = sum(file_timings.values())
+        avg_time = total_encode_time / len(file_timings) if file_timings else 0
+        log("\n==========================================")
+        log("BENCHMARK SUMMARY")
+        log("==========================================")
+        for filename, elapsed in file_timings.items():
+            log(f"{filename}: {elapsed:.1f}s")
+        log(f"\nTotal Time: {total_time:.1f}s")
+        log(f"Total Encoding Time: {total_encode_time:.1f}s")
+        log(f"Files Processed: {len(file_timings)}")
+        log(f"Average Time per File: {avg_time:.1f}s")
+        log("==========================================")
 
     if caffeinate_process: caffeinate_process.terminate()
 
